@@ -10,8 +10,9 @@
 module overmind::broker_it_yourself {
     use std::option::Option;
 
-    use aptos_std::simple_map::SimpleMap;
-    use aptos_framework::account::SignerCapability;
+    use aptos_std::simple_map::{Self, SimpleMap};
+    use aptos_framework::account::{Self, SignerCapability};
+    use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::event::EventHandle;
 
     use overmind::broker_it_yourself_events::{CreateOfferEvent, AcceptOfferEvent, CompleteTransactionEvent, ReleaseFundsEvent, CancelOfferEvent, OpenDisputeEvent, ResolveDisputeEvent};
@@ -98,13 +99,26 @@ module overmind::broker_it_yourself {
         @param admin - signer representing the admin
     */
     public entry fun init(admin: &signer) {
-        // TODO: Call assert_signer_is_admin function
-
-        // TODO: Create a resource account using `SEED` global constant
-
-        // TODO: Register the resource account with AptosCoin
-
-        // TODO: Move State resource to the admin address
+        // Check if the given signer is admin
+        assert_signer_is_admin(admin);
+        // Create a resource account using `SEED` global constant
+        let (resource, signer_cap) = account::create_resource_account(admin, SEED);
+        // Register the resource account with AptosCoin
+        account::register_coin<AptosCoin>(&resource);
+        // Move State resource to the admin address
+        move_to(admin, State {
+            offers: simple_map::new<u128, Offer>(),
+            creators_offers: simple_map::new<address, vector<u128>>(),
+            offer_id: 0,
+            cap: signer_cap,
+            create_offer_events: account::new_event_handle<CreateOfferEvent>(admin),
+            accept_offer_events: account::new_event_handle<AcceptOfferEvent>(admin),
+            complete_transaction_events: account::new_event_handle<CompleteTransactionEvent>(admin),
+            release_funds_events: account::new_event_handle<ReleaseFundsEvent>(admin),
+            cancel_offer_events: account::new_event_handle<CancelOfferEvent>(admin),
+            open_dispute_events: account::new_event_handle<OpenDisputeEvent>(admin),
+            resolve_dispute_events: account::new_event_handle<ResolveDisputeEvent>(admin),
+        });
     }
 
     /*
@@ -360,7 +374,8 @@ module overmind::broker_it_yourself {
     /////////////
 
     inline fun assert_signer_is_admin(admin: &signer) {
-        // TODO: Assert that the provided admin is the same as in Move.toml file
+        // Assert that the provided admin is the same as in Move.toml file
+        assert!(signer::address_of(signer) == @admin, ERROR_SIGNER_NOT_ADMIN);
     }
 
     inline fun assert_state_initialized() {
