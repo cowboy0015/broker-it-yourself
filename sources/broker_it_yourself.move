@@ -187,7 +187,7 @@ module overmind::broker_it_yourself {
                 apt_amount,
                 usd_amount,
                 sell_apt,
-                timestamp: timestamp::now_seconds()
+                timestamp::now_seconds()
             )
         );
     }
@@ -198,20 +198,34 @@ module overmind::broker_it_yourself {
         @param offer_id - id of the offer
     */
     public entry fun accept_offer(user: &signer, offer_id: u128) acquires State {
-        // TODO: Call assert_state_initialized function
+        // Call assert_state_initialized function
+        assert_state_initialized();
+        // Call assert_offer_exists function
+        let state = borrow_global_mut<State>(@admin);
+        assert_offer_exists(&state.offers, &offer_id);
 
-        // TODO: Call assert_offer_exists function
+        // Call assert_offer_not_accepted function
+        let offer = simple_map::borrow_mut(state.offers, &offer_id);
+        assert_offer_not_accepted(offer);
 
-        // TODO: Call assert_offer_not_accepted function
+        // Call assert_dispute_not_opened function
+        assert_dispute_not_opened(offer);
 
-        // TODO: Call assert_dispute_not_opened function
+        // Set Offer's counterparty field to the address of the user
+        let user_address = signer::address_of(user);
+        offer.counterparty = option::some(signer::address_of(user));
 
-        // TODO: Set Offer's counterparty field to the address of the user
-
-        // TODO: Transfer appropriate APT amount from the user to the PDA if Offer's sell_apt == false &&
+        // Transfer appropriate APT amount from the user to the PDA if Offer's sell_apt == false &&
         //      assert_user_has_enough_funds
-
-        // TODO: Emit AcceptOfferEvent event
+        if (!sell_apt) {
+            assert_user_has_enough_funds<AptosCoin>(user_address, offer.apt_amount);
+            coin::transfer<AptosCoin>(user, get_pda_address(), offer.apt_amount);
+        }
+        // Emit AcceptOfferEvent event
+        event::emit<AcceptOfferEvent>(
+            &mut state.accept_offer_events,
+            broker_it_yourself_events::new_accept_offer_event(offer_id, user_address, timestamp::now_seconds())
+        );
     }
 
     /*
@@ -439,10 +453,12 @@ module overmind::broker_it_yourself {
         offer_id: &u128
     ) {
         // TODO: Assert that the offers contains the offer_id
+        assert!(simple_map::contains_key(offers, offer_id), ERROR_OFFER_DOES_NOT_EXIST);
     }
 
     inline fun assert_offer_not_accepted(offer: &Offer) {
-        // TODO: Assert that the offer does not have counterparty value
+        // Assert that the offer does not have counterparty value
+        assert!(option::is_none(&offer.counterparty), ERROR_OFFER_ALREADY_ACCEPTED);
     }
 
     inline fun assert_offer_accepted(offer: &Offer) {
@@ -463,6 +479,7 @@ module overmind::broker_it_yourself {
 
     inline fun assert_dispute_not_opened(offer: &Offer) {
         // TODO: Assert that a dispute is not opened
+        assert!(!offer.dispute_opened, ERROR_DISPUTE_NOT_OPENED);
     }
 
     inline fun assert_dispute_opened(offer: &Offer) {
