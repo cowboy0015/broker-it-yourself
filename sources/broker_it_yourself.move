@@ -8,13 +8,16 @@
         resolve a dispute.
 */
 module overmind::broker_it_yourself {
-    use std::option::Option;
+    use std::option::{Self, Option};
 
-    use aptos_std::simple_map::SimpleMap;
-    use aptos_framework::account::SignerCapability;
+    use aptos_std::simple_map::{Self, SimpleMap};
+    use aptos_framework::account::{Self, SignerCapability};
+    use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::coin;
     use aptos_framework::event::EventHandle;
+    use aptos_framework::timestamp;
 
-    use overmind::broker_it_yourself_events::{CreateOfferEvent, AcceptOfferEvent, CompleteTransactionEvent, ReleaseFundsEvent, CancelOfferEvent, OpenDisputeEvent, ResolveDisputeEvent};
+    use overmind::broker_it_yourself_events::{Self, CreateOfferEvent, AcceptOfferEvent, CompleteTransactionEvent, ReleaseFundsEvent, CancelOfferEvent, OpenDisputeEvent, ResolveDisputeEvent};
 
     friend overmind::broker_it_yourself_tests;
 
@@ -98,13 +101,26 @@ module overmind::broker_it_yourself {
         @param admin - signer representing the admin
     */
     public entry fun init(admin: &signer) {
-        // TODO: Call assert_signer_is_admin function
-
-        // TODO: Create a resource account using `SEED` global constant
-
-        // TODO: Register the resource account with AptosCoin
-
-        // TODO: Move State resource to the admin address
+        // Check if the given signer is admin
+        assert_signer_is_admin(admin);
+        // Create a resource account using `SEED` global constant
+        let (resource, signer_cap) = account::create_resource_account(admin, SEED);
+        // Register the resource account with AptosCoin
+        account::register_coin<AptosCoin>(resource);
+        // Move State resource to the admin address
+        move_to(admin, State {
+            offers: simple_map::new<u128, Offer>(),
+            creators_offers: simple_map::new<address, vector<u128>>(),
+            offer_id: 0,
+            cap: signer_cap,
+            create_offer_events: account::new_event_handle<CreateOfferEvent>(admin),
+            accept_offer_events: account::new_event_handle<AcceptOfferEvent>(admin),
+            complete_transaction_events: account::new_event_handle<CompleteTransactionEvent>(admin),
+            release_funds_events: account::new_event_handle<ReleaseFundsEvent>(admin),
+            cancel_offer_events: account::new_event_handle<CancelOfferEvent>(admin),
+            open_dispute_events: account::new_event_handle<OpenDisputeEvent>(admin),
+            resolve_dispute_events: account::new_event_handle<ResolveDisputeEvent>(admin),
+        });
     }
 
     /*
@@ -122,19 +138,58 @@ module overmind::broker_it_yourself {
         usd_amount: u64,
         sell_apt: bool
     ) acquires State {
-        // TODO: Call assert_state_initialized function
+        // Call assert_state_initialized function
+        assert_state_initialized();
+        // Call get_next_offer_id function
+        let state = borrow_global_mut<State>(@admin);
+        let offer_id = get_next_offer_id(&mut state.offer_id);
 
-        // TODO: Call get_next_offer_id function
+        // Create instance of Offer struct
+        let creator_address = signer::address_of(creator);
+        let offer = Offer {
+            creator: creator_address,
+            arbiter: arbiter,
+            apt_amount: apt_amount,
+            usd_amount: usd_amount,
+            counterparty: option::none<address>(),
+            completion: OfferCompletion {
+                creator: false,
+                counterparty: false
+            },
+            dispute_opened: false,
+            sell_apt: sell_apt
+        }
 
-        // TODO: Create instance of Offer struct
+        // Add the Offer instance to the list of available offers
+        simple_map::add(&mut state.offers, offer_id, offer);
 
-        // TODO: Add the Offer instance to the list of available offers
+        // Add the offer id to the creator's offers list
+        if (simple_map::contains_key(&state.creators_offers, creator_address)) {
+            let offers = simple_map::borrow_mut(&mut state.creators_offers, &creator_address);
+            vector::push_back(offers, offer_id);
+        } else {
+            let offers = vector::singleton(offer_id);
+            simple_map::add(&mut state.creators_offers, creator_address, offers);
+        }
 
-        // TODO: Add the offer id to the creator's offers list
-
-        // TODO: Transfer appropriate amount of APT to the PDA if sell_apt == true && assert_user_has_enough_funds
-
-        // TODO: Emit CreateOfferEvent event
+        // Transfer appropriate amount of APT to the PDA if sell_apt == true && assert_user_has_enough_funds
+        if (sell_apt == true) {
+            assert_user_has_enough_funds(creator_address, apt_amount);
+            coin::transfer<AptosCoin>(creator, get_pda_address(), apt_amount);
+        }
+        // Emit CreateOfferEvent event
+        event::emit(
+            &mut state.create_offer_events,
+            broker_it_yourself_events::new_create_offer_event(
+                offer_id,
+                creator_address,
+                arbiter,
+                apt_amount,
+                usd_amount,
+                sell_apt,
+                timestamp::now_seconds()
+            )
+        );
     }
 
     /*
@@ -143,20 +198,34 @@ module overmind::broker_it_yourself {
         @param offer_id - id of the offer
     */
     public entry fun accept_offer(user: &signer, offer_id: u128) acquires State {
-        // TODO: Call assert_state_initialized function
+        // Call assert_state_initialized function
+        assert_state_initialized();
+        // Call assert_offer_exists function
+        let state = borrow_global_mut<State>(@admin);
+        assert_offer_exists(&state.offers, &offer_id);
 
-        // TODO: Call assert_offer_exists function
+        // Call assert_offer_not_accepted function
+        let offer = simple_map::borrow_mut(state.offers, &offer_id);
+        assert_offer_not_accepted(offer);
 
-        // TODO: Call assert_offer_not_accepted function
+        // Call assert_dispute_not_opened function
+        assert_dispute_not_opened(offer);
 
-        // TODO: Call assert_dispute_not_opened function
+        // Set Offer's counterparty field to the address of the user
+        let user_address = signer::address_of(user);
+        offer.counterparty = option::some(signer::address_of(user));
 
-        // TODO: Set Offer's counterparty field to the address of the user
-
-        // TODO: Transfer appropriate APT amount from the user to the PDA if Offer's sell_apt == false &&
+        // Transfer appropriate APT amount from the user to the PDA if Offer's sell_apt == false &&
         //      assert_user_has_enough_funds
-
-        // TODO: Emit AcceptOfferEvent event
+        if (!sell_apt) {
+            assert_user_has_enough_funds<AptosCoin>(user_address, offer.apt_amount);
+            coin::transfer<AptosCoin>(user, get_pda_address(), offer.apt_amount);
+        }
+        // Emit AcceptOfferEvent event
+        event::emit<AcceptOfferEvent>(
+            &mut state.accept_offer_events,
+            broker_it_yourself_events::new_accept_offer_event(offer_id, user_address, timestamp::now_seconds())
+        );
     }
 
     /*
@@ -353,22 +422,30 @@ module overmind::broker_it_yourself {
     */
     public(friend) inline fun get_next_offer_id(offer_id: &mut u128): u128 {
         // TODO: Return a copy of offer_id and increment the original by one
+        *offer_id = *offer_id + 1;
+        *offer_id - 1
     }
 
+    inline fun get_pda_address(): address {
+        account::create_resource_address(&@admin, SEED)
+    }
     /////////////
     // ASSERTS //
     /////////////
 
     inline fun assert_signer_is_admin(admin: &signer) {
-        // TODO: Assert that the provided admin is the same as in Move.toml file
+        // Assert that the provided admin is the same as in Move.toml file
+        assert!(signer::address_of(signer) == @admin, ERROR_SIGNER_NOT_ADMIN);
     }
 
     inline fun assert_state_initialized() {
-        // TODO: Assert that State resource exists under the admin's address
+        // Assert that State resource exists under the admin's address
+        assert!(exists<State>(@admin), ERROR_STATE_NOT_INITIALIZED);
     }
 
     inline fun assert_user_has_enough_funds<CoinType>(user: address, coin_amount: u64) {
-        // TODO: Assert that the provided user's balance equals or is greater than the coin_amount
+        // Assert that the provided user's balance equals or is greater than the coin_amount
+        assert!(coin::balance<CoinType>(user) >= coin_amount, ERROR_INSUFFICIENT_FUNDS);
     }
 
     inline fun assert_offer_exists(
@@ -376,10 +453,12 @@ module overmind::broker_it_yourself {
         offer_id: &u128
     ) {
         // TODO: Assert that the offers contains the offer_id
+        assert!(simple_map::contains_key(offers, offer_id), ERROR_OFFER_DOES_NOT_EXIST);
     }
 
     inline fun assert_offer_not_accepted(offer: &Offer) {
-        // TODO: Assert that the offer does not have counterparty value
+        // Assert that the offer does not have counterparty value
+        assert!(option::is_none(&offer.counterparty), ERROR_OFFER_ALREADY_ACCEPTED);
     }
 
     inline fun assert_offer_accepted(offer: &Offer) {
@@ -400,6 +479,7 @@ module overmind::broker_it_yourself {
 
     inline fun assert_dispute_not_opened(offer: &Offer) {
         // TODO: Assert that a dispute is not opened
+        assert!(!offer.dispute_opened, ERROR_DISPUTE_NOT_OPENED);
     }
 
     inline fun assert_dispute_opened(offer: &Offer) {
