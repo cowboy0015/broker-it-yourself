@@ -235,28 +235,64 @@ module overmind::broker_it_yourself {
         @param offer_id - id of the offer
     */
     public entry fun complete_transaction(user: &signer, offer_id: u128) acquires State {
-        // TODO: Call assert_state_initialized function
+        // Call assert_state_initialized function
+        assert_state_initialized();
+        // Call assert_offer_exists function
+        let state = borrow_global_mut<State>(@admin);
+        assert_offer_exists(&state.offers, &offer_id);
 
-        // TODO: Call assert_offer_exists function
+        // Call assert_offer_accepted function
+        let offer = simple_map::borrow_mut(state.offers, &offer_id);
+        assert_offer_accepted(offer);
 
-        // TODO: Call assert_offer_accepted function
+        // call assert_user_participates_in_transaction function
+        let user_address = signer::address_of(user);
+        assert_user_participates_in_transaction(user_address, offer);
 
-        // TODO: call assert_user_participates_in_transaction function
+        // call assert_user_has_not_marked_completed_yet function
+        assert_user_has_not_marked_completed_yet(user_address, offer);
+        // call assert_dispute_not_opened function
+        assert_dispute_not_opened(offer);
 
-        // TODO: call assert_user_has_not_marked_completed_yet function
-
-        // TODO: call assert_dispute_not_opened function
-
-        // TODO: Compare the user's address and set appropriate completion flag to true
-
-        // TODO: Emit CompleteTransactionEvent event
-
-        // TODO: If both completion flags are true, then:
+        // Compare the user's address and set appropriate completion flag to true
+        if (user_address == offer.creator) {
+            offer.completion.creator = true; 
+        } else {
+            offer.completion.counterparty = true; 
+        }
+        // Emit CompleteTransactionEvent event
+        event::emit<CompleteTransactionEvent>(
+            &mut state.complete_transaction_events,
+            broker_it_yourself_events::new_complete_transaction_event(
+                offer_id,
+                user_address,
+                timestamp::now_seconds()
+            )
+        );
+        // If both completion flags are true, then:
         //      1) Remove the offer from the available offers list
         //      2) Remove the offer's id from the creator's offers list
         //      3) Transfer appropriate amount of APT either to the creator or the counterparty depending on the
         //              Offer's sell_apt flag
         //      4) Emit ReleaseFundsEvent event
+        if (offer.completion.counterparty && offer.completion.creator) {
+            simple_map::remove(&mut state.offers, &offer_id);
+            creators_offers = simple_map::borrow_mut(&mut state.creators_offers, &user_address);
+            simple_map::remove(&mut creators_offers, &offer_id);
+            if (sell_apt) {
+                coin::transfer<AptosCoin>(get_pda_address(), offer.creator, offer.apt_amount);
+            } else {
+                coin::transfer<AptosCoin>(get_pda_address(), offer.arbiter, offer.apt_amount);
+            }
+            event::emit<ReleaseFundsEvent>(
+                &mut state.release_funds_events,
+                broker_it_yourself_events::new_release_funds_event(
+                    offer_id,
+                    user_address,
+                    timestamp::now_seconds()
+                )
+            );
+        }
     }
 
     /*
@@ -462,15 +498,22 @@ module overmind::broker_it_yourself {
     }
 
     inline fun assert_offer_accepted(offer: &Offer) {
-        // TODO: Assert that the offer has counterparty value
+        // Assert that the offer has counterparty value
+        assert!(option::is_some(&offer.counterparty), ERROR_OFFER_NOT_ACCEPTED);
     }
 
     inline fun assert_user_participates_in_transaction(user: address, offer: &Offer) {
-        // TODO: Assert that the provided user's address is either the creator or the counterparty
+        // Assert that the provided user's address is either the creator or the counterparty
+        assert!(user == offer.creator || option::contains(&offer.counterparty, &user), ERROR_USER_DOES_NOT_PARTICIPATE_IN_TRANSACTION);
     }
 
     inline fun assert_user_has_not_marked_completed_yet(user: address, offer: &Offer) {
-        // TODO: Assert that the user has not marked the offer as completed yet (cover all cases)
+        // Assert that the user has not marked the offer as completed yet (cover all cases)
+        if (user == offer.creator) {
+            assert!(!offer.completion.creator, ERROR_USER_ALREADY_MARKED_AS_COMPLETED);
+        } else {
+            assert!(!offer.completion.counterparty, ERROR_USER_ALREADY_MARKED_AS_COMPLETED);
+        }
     }
 
     inline fun assert_signer_is_creator(creator: &signer, offer: &Offer) {
