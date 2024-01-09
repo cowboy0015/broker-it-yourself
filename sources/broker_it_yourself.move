@@ -301,23 +301,42 @@ module overmind::broker_it_yourself {
         @param offer_id - id of the offer
     */
     public entry fun cancel_offer(creator: &signer, offer_id: u128) acquires State {
-        // TODO: Call assert_state_initialized function
+        // Call assert_state_initialized function
+        assert_state_initialized();
 
-        // TODO: Call assert_offer_exists function
+        // Call assert_offer_exists function
+        let state = borrow_global_mut<State>(@admin);
+        assert_offer_exists(&state.offers, &offer_id);
 
-        // TODO: Remove the offer from the list of available offers
+        // Remove the offer from the list of available offers
+        let (id, offer) = simple_map::remove<u128, Offer>(&mut state.offers, &offer_id);
 
-        // TODO: Call assert_signer_is_creator function
+        // Call assert_signer_is_creator function
+        assert_signer_is_creator(creator, offer);
 
-        // TODO: Call assert_offer_not_accepted function
+        // Call assert_offer_not_accepted function
+        assert_offer_not_accepted(offer);
+        // Call assert_dispute_not_opened function
+        assert_dispute_not_opened(offer);
+        // Remove the offer's id from the creator's offers list
+        let creator_address = signer::address_of(creator);
+        let creator_offers = simple_map::borrow_mut(&mut state.creators_offers, &creator_address);
+        vector::remove(&mut creator_offers, (id as u64));
+        
+        // Transfer appropriate amount of APT from the PDA to the creator if the Offer's sell_apt == true
+        let pda_signer = account::create_signer_with_capability(&state.cap);
 
-        // TODO: Call assert_dispute_not_opened function
-
-        // TODO: Remove the offer's id from the creator's offers list
-
-        // TODO: Transfer appropriate amount of APT from the PDA to the creator if the Offer's sell_apt == true
-
-        // TODO: Emit CancelOfferEvent event
+        if (sell_apt) {
+            coin::transfer<AptosCoin>(&pda_signer, creator_address, offer.apt_amount);
+        }
+        // Emit CancelOfferEvent event
+        event::emit<CancelOfferEvent>(
+            &mut state.cancel_offer_events,
+            broker_it_yourself_events::new_cancel_offer_event(
+                id,
+                timestamp::now_seconds()
+            )
+        );
     }
 
     /*
@@ -517,7 +536,8 @@ module overmind::broker_it_yourself {
     }
 
     inline fun assert_signer_is_creator(creator: &signer, offer: &Offer) {
-        // TODO: Assert that the provided creator is the creator of the provided offer
+        // Assert that the provided creator is the creator of the provided offer
+        assert!(signer::address_of(creator) == offer.creator, ERROR_SIGNER_NOT_CREATOR);
     }
 
     inline fun assert_dispute_not_opened(offer: &Offer) {
