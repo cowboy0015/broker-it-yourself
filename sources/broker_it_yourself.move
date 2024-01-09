@@ -312,21 +312,22 @@ module overmind::broker_it_yourself {
         let (id, offer) = simple_map::remove<u128, Offer>(&mut state.offers, &offer_id);
 
         // Call assert_signer_is_creator function
-        assert_signer_is_creator(creator, offer);
+        assert_signer_is_creator(creator, &offer);
 
         // Call assert_offer_not_accepted function
-        assert_offer_not_accepted(offer);
+        assert_offer_not_accepted(&offer);
+
         // Call assert_dispute_not_opened function
-        assert_dispute_not_opened(offer);
+        assert_dispute_not_opened(&offer);
+
         // Remove the offer's id from the creator's offers list
-        let creator_address = signer::address_of(creator);
-        let creator_offers = simple_map::borrow_mut(&mut state.creators_offers, &creator_address);
-        vector::remove(&mut creator_offers, (id as u64));
+        let creator_offers = simple_map::borrow_mut(&mut state.creators_offers, &offer.creator);
+        vector::remove(creator_offers, (id as u64));
         
         // Transfer appropriate amount of APT from the PDA to the creator if the Offer's sell_apt == true
         let pda_signer = account::create_signer_with_capability(&state.cap);
 
-        if (sell_apt) {
+        if (offer.sell_apt) {
             coin::transfer<AptosCoin>(&pda_signer, creator_address, offer.apt_amount);
         }
         // Emit CancelOfferEvent event
