@@ -244,7 +244,7 @@ module overmind::broker_it_yourself {
         assert_offer_exists(&state.offers, &offer_id);
 
         // Call assert_offer_accepted function
-        let offer = *simple_map::borrow_mut(&mut state.offers, &offer_id);
+        let offer = *simple_map::borrow(&mut state.offers, &offer_id);
         assert_offer_accepted(&offer);
 
         // call assert_user_participates_in_transaction function
@@ -277,14 +277,15 @@ module overmind::broker_it_yourself {
         //      3) Transfer appropriate amount of APT either to the creator or the counterparty depending on the
         //              Offer's sell_apt flag
         //      4) Emit ReleaseFundsEvent event
-        if (offer.completion.counterparty && offer.completion.creator) {
-            simple_map::remove(&mut state.offers, &offer_id);
+        let offers = &state.offers;
+        if (simple_map::borrow(offers, &offer_id).completion.counterparty && simple_map::borrow(offers, &offer_id).completion.creator) {
+            simple_map::remove<u128, Offer>(&mut state.offers, &offer_id);
             let creators_offers = simple_map::borrow_mut(&mut state.creators_offers, &user_address);
             vector::remove(creators_offers, (offer_id as u64));
             if (offer.sell_apt) {
-                coin::transfer<AptosCoin>(&get_pda_signer(state), offer.creator, offer.apt_amount);
+                coin::transfer<AptosCoin>(&get_pda_signer(state), *option::borrow<address>(&offer.counterparty), offer.apt_amount);
             } else {
-                coin::transfer<AptosCoin>(&get_pda_signer(state), offer.arbiter, offer.apt_amount);
+                coin::transfer<AptosCoin>(&get_pda_signer(state), offer.creator, offer.apt_amount);
             };
             event::emit_event<ReleaseFundsEvent>(
                 &mut state.release_funds_events,
@@ -654,12 +655,12 @@ module overmind::broker_it_yourself {
 
     inline fun assert_dispute_not_opened(offer: &Offer) {
         // Assert that a dispute is not opened
-        assert!(!offer.dispute_opened, ERROR_DISPUTE_NOT_OPENED);
+        assert!(!offer.dispute_opened, ERROR_DISPUTE_ALREADY_OPENED);
     }
 
     inline fun assert_dispute_opened(offer: &Offer) {
         // Assert that a dispute is opened
-        assert!(offer.dispute_opened, ERROR_DISPUTE_ALREADY_OPENED);
+        assert!(offer.dispute_opened, ERROR_DISPUTE_NOT_OPENED);
     }
 
     inline fun assert_singer_is_arbiter(arbiter: &signer, offer: &Offer) {
